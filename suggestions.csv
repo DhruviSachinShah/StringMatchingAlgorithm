@@ -1,0 +1,7 @@
+This is a search engine that does string comparision using Rabin-Karp.
+Frontend is made using React JS.
+Backend is written using python.
+The search engine matches the input pattern with text in this file and gives suggestions.
+All the texts that contain the input (pattern) are suggested.
+If it is not present, it gets appeneded in the file when enter is pressed.
+Rabin-Karp is used since it is very efficient.
