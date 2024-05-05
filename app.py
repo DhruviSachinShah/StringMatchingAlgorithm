@@ -2,6 +2,7 @@ import csv
 from flask import Flask, request, jsonify
 import requests
 from flask_cors import CORS
+import hashlib
 
 app = Flask(__name__)
 CORS(app)
@@ -24,39 +25,56 @@ def write_suggestions_to_csv(filename, suggestion):
 
 suggestions_file = 'suggestions.csv'
 
-PRIME = 5
+class BloomFilter:
+    def __init__(self, size, hash_functions):
+        self.size = size
+        self.hash_functions = hash_functions
+        self.bit_array = [False] * size
+        
+    def add(self, item):
+        for hash_func in self.hash_functions:
+            index = hash_func(item) % self.size
+            self.bit_array[index] = True
+            
+    def __contains__(self, item):
+        for hash_func in self.hash_functions:
+            index = hash_func(item) % self.size
+            if not self.bit_array[index]:
+                return False
+        return True
 
-def calc_hash(s):
-        hash_val = 0
-        for i in range(len(s)):
-            hash_val += ord(s[i]) * (PRIME ** i)
-        return hash_val
+def hash_function(text):
+    return int(hashlib.sha256(text.encode()).hexdigest(), 16)
 
-def str_hash(old_hash, old_char, new_char, pattern_length):
-    new_hash = (old_hash - ord(old_char)) / PRIME
-    new_hash += ord(new_char) * (PRIME ** (pattern_length - 1))
-    return new_hash
+def xor_hash(s):
+    hash_val = 0
+    for char in s:
+        hash_val ^= ord(char)
+    return hash_val
 
-def rabin_karp(text, pattern):
-    
+def complex_modular_hash(s, base=257, modulus=int(1e9 + 9)):
+    hash_val = 0
+    for char in s:
+        hash_val = hash_val * base + ord(char)
+        hash_val ^= hash_val >> 10
+        hash_val %= modulus
+    return hash_val
 
+def word_wise_rabin_karp(text, pattern):
+    pattern_hash = (xor_hash(pattern), complex_modular_hash(pattern))
     pattern_length = len(pattern)
-    str_hash_val = calc_hash(text[:pattern_length])
-    pattern_hash = calc_hash(pattern)
+    hashes = {}
+    words = text.split()
+    for i, word in enumerate(words):
+        word_hash = (xor_hash(word), complex_modular_hash(word))
+        if word_hash == pattern_hash:
+            if word == pattern:
+                hashes[i] = word
+    return hashes
 
-    matches = []
-
-    for i in range(len(text) - pattern_length + 1):
-        if str_hash_val == pattern_hash and text[i:i + pattern_length] == pattern:
-            matches.append(i)
-        if i < len(text) - pattern_length:
-            str_hash_val = str_hash(str_hash_val, text[i], text[i + pattern_length], pattern_length)
-
-    return matches
-
+bloom_filter = BloomFilter(10000, [hash_function, xor_hash, complex_modular_hash])
 
 @app.route('/search', methods=['GET', 'POST'])
-
 def search():
     if request.method == 'POST':
         query = request.json.get('query')
@@ -65,10 +83,11 @@ def search():
         match = []
         suggestions = read_suggestions_from_csv(suggestions_file)
         for suggestion in suggestions:
-            matches = rabin_karp(suggestion.lower(), query.lower())
+            matches = word_wise_rabin_karp(suggestion.lower(), query.lower())
             if matches:
                 match.append(suggestion)
-        if shouldappend and query and query.lower() not in (suggestion.lower() for suggestion in suggestions):
+        if shouldappend and query and query.lower() not in bloom_filter:
+            bloom_filter.add(query.lower())
             write_suggestions_to_csv(suggestions_file, query)
             print("Inside shouldappend", shouldappend)
         return jsonify(match)
